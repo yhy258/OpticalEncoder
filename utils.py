@@ -105,9 +105,9 @@ def filter_IEEE_error(psf, otf):
     return otf
 
 
-# This should be edited.. -> complex computation does not require additional dimension.
 # a is sample, and b is psf.
-def fftconv2d(a, b, fa=None, fb=None, shape='same', fftsize=None):
+# TODO: I have to validate this ...
+def fftconv2d(a, b, fa=None, fb=None, shape='same', fftsize=None, rfft=False, roll=False):
     # sample : B, C, H, W or B, C, D, H, W = a
     # psf : D, N, N = b
     
@@ -119,39 +119,64 @@ def fftconv2d(a, b, fa=None, fb=None, shape='same', fftsize=None):
         fftsize = [asize[-2] + bsize[-2] - 1, asize[-1] + bsize[-1] - 1]
         
     # a : B, C, H, W or B, C, D, H, W
-    if fa is None:
+    if rfft:
         
-        fa = torch.fft.fftn(
-            F.pad(
-                a, (0, fftsize[-1] - asize[-1], 0, fftsize[-2] - asize[-2])
-            ), dim=[-2, -1]
-        ) # B, ..., H + alpha, W + alpha ; complex value.
-        # fa = torch.fft(
-        #     F.pad(
-        #         a.unsqueeze(-1),
-        #         (0, 1, 0, fftsize[-1] - asize[-1], 0, fftsize[-2] - asize[-2])
-        #     ), # B, ..., H+alpha, W+alpha, 2
-        #     2,
-        # )
-        
-    if fb is None:
-        fb = torch.fft.fftn(
-            F.pad(
+        if fa is None:
+            
+            fa = torch.fft.rfft2(
+                F.pad(
+                    a, (0, fftsize[-1] - asize[-1], 0, fftsize[-2] - asize[-2])
+                ), dim=[-2, -1]
+            )
+        if fb is None:
+            paded_b = F.pad(
                 b, (0, fftsize[-1] - bsize[-1], 0, fftsize[-2] - bsize[-2])
-            ), dim=[-2, -1]
-        ) # B, ..., H + alpha, W + alpha ; complex value.
-        fb = filter_IEEE_error(F.pad(
-                b, (0, fftsize[-1] - bsize[-1], 0, fftsize[-2] - bsize[-2])
-            ), fb)
-        # fb = torch.fft(
-        #     F.pad(
-        #         b.unsqueeze(-1),
-        #         (0, 1, 0, fftsize[-1] - bsize[-1], 0, fftsize[-2] - bsize[-2])
-        #     ), # B, ..., H+alpha, W+alpha, 2
-        #     2,
-        # )
+            )
         
-    ab = torch.fft.ifftn(fa * fb, dim=(-2, -1))
+            if roll:
+                for axis, axis_size in enumerate(b.shape[2:]):
+                    paded_b = torch.roll(paded_b, -int(axis_size/2), dims=axis)
+            
+            fb = torch.fft.rfft2(paded_b)
+            
+            fb = filter_IEEE_error(F.pad(
+                    b, (0, fftsize[-1] - bsize[-1], 0, fftsize[-2] - bsize[-2])
+                ), fb)
+        ab = torch.fft.irfft2(fa * fb, dim=(-2, -1), s=fftsize)
+    else:
+        if fa is None:
+            
+            fa = torch.fft.fftn(
+                F.pad(
+                    a, (0, fftsize[-1] - asize[-1], 0, fftsize[-2] - asize[-2])
+                ), dim=[-2, -1]
+            ) # B, ..., H + alpha, W + alpha ; complex value.
+            # fa = torch.fft(
+            #     F.pad(
+            #         a.unsqueeze(-1),
+            #         (0, 1, 0, fftsize[-1] - asize[-1], 0, fftsize[-2] - asize[-2])
+            #     ), # B, ..., H+alpha, W+alpha, 2
+            #     2,
+            # )
+            
+        if fb is None:
+            fb = torch.fft.fftn(
+                F.pad(
+                    b, (0, fftsize[-1] - bsize[-1], 0, fftsize[-2] - bsize[-2])
+                ), dim=[-2, -1]
+            ) # B, ..., H + alpha, W + alpha ; complex value.
+            fb = filter_IEEE_error(F.pad(
+                    b, (0, fftsize[-1] - bsize[-1], 0, fftsize[-2] - bsize[-2])
+                ), fb)
+            # fb = torch.fft(
+            #     F.pad(
+            #         b.unsqueeze(-1),
+            #         (0, 1, 0, fftsize[-1] - bsize[-1], 0, fftsize[-2] - bsize[-2])
+            #     ), # B, ..., H+alpha, W+alpha, 2
+            #     2,
+            # )
+            
+        ab = torch.fft.ifftn(fa * fb, dim=(-2, -1))
     # ab = (
     #     torch.fft.ifftn(fa * fb, dim=(-2, -1))
     #     .index_select(-1, torch.tensor(0, device=fa.device))
